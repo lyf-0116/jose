@@ -17,6 +17,7 @@ import { prepareKey } from './key.js'
 import { JWE, isJWECEKTransport, jweAlgorithm, jweEncryption } from './jwe_algorithms.js'
 import type { JWEEncryption } from './jwe_algorithms.js'
 import { decompress, validateZip } from './deflate.js'
+import { defaultMaxDecompressedLength } from './defaults.js'
 
 export type DecryptGetKey = (
   protectedHeader: types.JWEHeaderParameters | undefined,
@@ -174,7 +175,7 @@ export function prepareDecrypt(options?: types.DecryptOptions): DecryptShared {
   const { crit, maxPBES2Count, maxDecompressedLength } = options ?? {}
 
   validateMaxPBES2Count(maxPBES2Count)
-  const decompressionLimit = maxDecompressedLength ?? 250_000
+  const decompressionLimit = maxDecompressedLength ?? defaultMaxDecompressedLength
   if (
     decompressionLimit !== 0 &&
     decompressionLimit !== Infinity &&
@@ -355,7 +356,7 @@ export async function decryptJWE(
 
   // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 20.
   if (joseHeader.zip === 'DEF') {
-    const decompressionLimit = maxDecompressedLength ?? 250_000
+    const decompressionLimit = maxDecompressedLength ?? defaultMaxDecompressedLength
     if (decompressionLimit === 0) {
       throw new JOSENotSupported(
         'JWE "zip" (Compression Algorithm) Header Parameter is not supported.',

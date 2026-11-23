@@ -20,6 +20,7 @@ import {
 import { JOSENotSupported, JWEInvalid } from '../util/errors.js'
 import { decodeBase64url, assertUint8Array, isObject } from './validate.js'
 import { digest, concat, encode, uint32be } from './buffer_utils.js'
+import { defaultMaxPBES2Count } from './defaults.js'
 import { checkCekLength, generateCek, encrypt, decrypt } from './content_encryption.js'
 
 type SubtleCryptoWithGetPublicKey = SubtleCrypto & {
@@ -321,7 +322,7 @@ export async function decryptKeyManagement(
       if (typeof joseHeader.p2c !== 'number')
         throw new JWEInvalid(`JOSE Header "p2c" (PBES2 Count) missing or invalid`)
 
-      const p2cLimit = maxPBES2Count ?? 10_000
+      const p2cLimit = maxPBES2Count ?? defaultMaxPBES2Count
 
       if (joseHeader.p2c > p2cLimit)
         throw new JWEInvalid(`JOSE Header "p2c" (PBES2 Count) out is of acceptable bounds`)
