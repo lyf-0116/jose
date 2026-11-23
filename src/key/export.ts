@@ -102,6 +102,8 @@ export async function exportJWK(
   const jwk = (await crypto.subtle.exportKey('jwk', key)) as types.JWK
   // Export policy omits usage/extractability metadata. AKP retains its required alg
   // Parameter (RFC 9964, Section 3). Other key parameters are exported by Web Crypto.
+  // Omitted parameters are treated as "no constraint" on import, so an export -> import round
+  // trip stays usable; only explicitly present parameters are enforced by the import side.
   delete jwk.ext
   delete jwk.key_ops
   delete jwk.use

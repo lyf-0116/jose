@@ -283,3 +283,34 @@ test('JWKS imports never cache rejected private keys', async (t) => {
   }
   assert.equal(imports.count, 2)
 })
+
+test('JWKS selection applies the same use, key_ops and alg constraints everywhere', async () => {
+  // One generated pair backs every branch in this test.
+  const jwk = await exportJWK((await generateKeyPair('ES256', { extractable: true })).publicKey)
+
+  // No metadata declared: the key is usable for any matching signature algorithm.
+  await assert.doesNotReject(createLocalJWKSet({ keys: [jwk] })({ alg: 'ES256' }))
+
+  for (const member of [
+    { ...jwk, use: 'enc' },
+    { ...jwk, key_ops: ['sign'] },
+    { ...jwk, alg: 'ES384' },
+  ]) {
+    await assert.rejects(
+      createLocalJWKSet({ keys: [member] })({ alg: 'ES256' }),
+      errorLike({ code: 'ERR_JWKS_NO_MATCHING_KEY' }),
+    )
+  }
+
+  // Fully consistent declarations still resolve, including an explicit alg match.
+  const consistent = { ...jwk, use: 'sig', key_ops: ['verify'], alg: 'ES256' }
+  const resolved = await createLocalJWKSet({ keys: [consistent] })({ alg: 'ES256' })
+  assert.equal(resolved.type, 'public')
+
+  // A key set built from an exported JWK carries no constraints, so it stays usable.
+  const roundTripped = await exportJWK(resolved)
+  assert.equal(roundTripped.use, undefined)
+  assert.equal(roundTripped.key_ops, undefined)
+  assert.equal(roundTripped.alg, undefined)
+  await assert.doesNotReject(createLocalJWKSet({ keys: [roundTripped] })({ alg: 'ES256' }))
+})

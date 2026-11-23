@@ -384,3 +384,37 @@ for (const fallback of [false, true]) {
     assert.strictEqual(conversions, 2)
   })
 }
+
+test('a contradictory verification JWK is rejected on direct key input', async () => {
+  // One ES256 pair; the public half declares itself unusable for verification.
+  const { privateKey, publicKey } = await generateKeyPair('ES256', { extractable: true })
+  const jws = await new CompactSign(payload).setProtectedHeader({ alg: 'ES256' }).sign(privateKey)
+  const publicJwk = await exportJWK(publicKey)
+
+  const contradictions: Array<[jwk: Record<string, unknown>, message: string]> = [
+    [
+      { ...publicJwk, use: 'enc' },
+      'Invalid key for this operation, its "use" must be "sig" when present',
+    ],
+    [
+      { ...publicJwk, key_ops: ['sign'] },
+      'Invalid key for this operation, its "key_ops" must include "verify" when present',
+    ],
+    [
+      { ...publicJwk, alg: 'ES384' },
+      'Invalid key for this operation, its "alg" must be "ES256" when present',
+    ],
+  ]
+
+  for (const [jwk, message] of contradictions) {
+    await assert.rejects(compactVerify(jws, jwk), (error) => {
+      assert.ok(error instanceof TypeError)
+      assert.strictEqual(error.message, message)
+      return true
+    })
+  }
+
+  // The same key with matching declarations verifies without errors.
+  const consistent = { ...publicJwk, use: 'sig', key_ops: ['verify'], alg: 'ES256' }
+  assert.deepStrictEqual((await compactVerify(jws, consistent)).payload, payload)
+})

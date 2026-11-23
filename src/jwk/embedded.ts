@@ -5,7 +5,7 @@
  */
 
 import type * as types from '../types.d.ts'
-import { jwkToKey, normalizeJwk } from '../lib/key.js'
+import { checkJwkConstraints, jwkToKey, normalizeJwk } from '../lib/key.js'
 import { jwsAlgorithm } from '../lib/jws_algorithms.js'
 import { isObject } from '../lib/validate.js'
 import { JWSInvalid } from '../util/errors.js'
@@ -58,14 +58,18 @@ export async function EmbeddedJWK(
   }
 
   const entry = jwsAlgorithm(joseHeader.alg)
-  // RFC 7517, Sections 4.2 and 4.4: respect declared key use and algorithm.
-  if (jwk.use !== undefined && jwk.use !== 'sig') {
-    throw new JWSInvalid('Invalid Embedded JWK, its "use" must be "sig" when present')
+  // RFC 7517, Sections 4.2-4.4: respect declared key use, operations and algorithm.
+  try {
+    checkJwkConstraints(entry, jwk, 'verify')
+  } catch (cause) {
+    throw new JWSInvalid(`Invalid Embedded JWK, ${(cause as Error).message}`, { cause })
   }
-  if (jwk.alg !== undefined && jwk.alg !== entry.alg) {
-    throw new JWSInvalid(`Invalid Embedded JWK, its "alg" must be "${entry.alg}" when present`)
+  let key: types.CryptoKey
+  try {
+    key = await jwkToKey(entry, jwk, true)
+  } catch (cause) {
+    throw new JWSInvalid('Invalid Embedded JWK', { cause })
   }
-  const key = await jwkToKey(entry, jwk, true)
 
   // RFC 7515, Section 4.1.3: the jwk Header Parameter represents a public key.
   if (key.type !== 'public') {

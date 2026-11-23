@@ -99,6 +99,8 @@ test('EmbeddedJWK rejects a key intended for encryption', async () => {
     EmbeddedJWK({ alg: 'ES256', jwk }),
     errorLike({
       code: 'ERR_JWS_INVALID',
+      message:
+        'Invalid Embedded JWK, Invalid key for this operation, its "use" must be "sig" when present',
     }),
   )
 })
@@ -110,15 +112,38 @@ test('EmbeddedJWK rejects a key intended for another algorithm', async () => {
     EmbeddedJWK({ alg: 'ES256', jwk }),
     errorLike({
       code: 'ERR_JWS_INVALID',
+      message:
+        'Invalid Embedded JWK, Invalid key for this operation, its "alg" must be "ES256" when present',
     }),
   )
 })
 
+test('EmbeddedJWK rejects a key that does not permit verification', async () => {
+  const jwk = { ...pubjwk(key), key_ops: ['sign'] }
+
+  await assert.rejects(
+    EmbeddedJWK({ alg: 'ES256', jwk }),
+    errorLike({
+      code: 'ERR_JWS_INVALID',
+      message:
+        'Invalid Embedded JWK, Invalid key for this operation, its "key_ops" must include "verify" when present',
+    }),
+  )
+})
+
+test('EmbeddedJWK accepts a key that explicitly permits verification', async () => {
+  const jwk = { ...pubjwk(key), key_ops: ['verify'] }
+
+  await assert.doesNotReject(EmbeddedJWK({ alg: 'ES256', jwk }))
+})
+
 test('EmbeddedJWK snapshots JWK operation metadata', async () => {
-  for (const [parameter, first, second] of [
+  const cases: Array<[parameter: 'use' | 'alg' | 'key_ops', first: unknown, second: unknown]> = [
     ['use', 'sig', 'enc'],
     ['alg', 'ES256', 'ECDH-ES'],
-  ] as const) {
+    ['key_ops', ['verify'], ['sign']],
+  ]
+  for (const [parameter, first, second] of cases) {
     let reads = 0
     const jwk = pubjwk(key)
     Object.defineProperty(jwk, parameter, {

@@ -9,8 +9,14 @@
 
 import { decode as decodeBase64URL } from '../util/base64url.js'
 import { fromSPKI, fromPKCS8, fromX509 } from '../lib/asn1.js'
-import { jwkToKey, validateExtractableOption, normalizeJwk } from '../lib/key.js'
+import {
+  checkJwkConstraints,
+  jwkToKey,
+  validateExtractableOption,
+  normalizeJwk,
+} from '../lib/key.js'
 import { keyAlgorithm } from '../lib/key_algorithm.js'
+import { JWS } from '../lib/jws_algorithms.js'
 import { JOSENotSupported } from '../util/errors.js'
 import { isObject } from '../lib/validate.js'
 
@@ -157,7 +163,9 @@ export async function importPKCS8(
  * match the argument when provided.
  *
  * > [!NOTE]\
- * > CryptoKey imports honor the JWK "key_ops" and "ext" parameters.
+ * > Declared JWK "use", "key_ops" and "alg" parameters are validated against the resolved algorithm
+ * > and the key material's operation (sign/verify or encrypt/decrypt). The "ext" parameter controls
+ * > the imported key's extractability.
  *
  * > [!NOTE]\
  * > Symmetric JWKs (`kty: "oct"`) return {@link !Uint8Array} instead of CryptoKey.
@@ -215,12 +223,24 @@ export async function importJWK(
   if (normalized.kty !== 'oct' && !alg) {
     throw new TypeError('"alg" argument is required when "jwk.alg" is not present')
   }
+  // JWS keys split sign/verify by key material; JWE keys split encrypt/decrypt the same way.
+  const usage = (key: types.JWK): 'sign' | 'verify' | 'encrypt' | 'decrypt' => {
+    const isPrivate = !!(key.d || key.priv)
+    if (alg && !Object.hasOwn(JWS, alg)) return isPrivate ? 'decrypt' : 'encrypt'
+    return isPrivate ? 'sign' : 'verify'
+  }
 
   switch (normalized.kty) {
     // RFC 7518, Section 6.4.1: decode the symmetric Key Value.
     case 'oct':
       if (typeof normalized.k !== 'string') {
         throw new TypeError('missing "k" (Key Value) Parameter value')
+      }
+      // Symmetric JWKs resolve to raw bytes without an operation context, so usage
+      // constraints are enforced by the consuming operation. With an alg, apply
+      // the same declared-constraint checks the other entry points use.
+      if (alg) {
+        checkJwkConstraints(keyAlgorithm(alg), normalized, usage(normalized))
       }
 
       return decodeBase64URL(normalized.k)
@@ -232,12 +252,17 @@ export async function importJWK(
       if (alg !== jwkAlg) {
         throw new TypeError('JWK alg and alg option value mismatch')
       }
-      return jwkToKey(keyAlgorithm(alg), normalized, extractable)
+      const entry = keyAlgorithm(alg)
+      checkJwkConstraints(entry, normalized, usage(normalized))
+      return jwkToKey(entry, normalized, extractable)
     }
     case 'RSA':
     case 'EC':
-    case 'OKP':
-      return jwkToKey(keyAlgorithm(alg), normalized, extractable)
+    case 'OKP': {
+      const entry = keyAlgorithm(alg)
+      checkJwkConstraints(entry, normalized, usage(normalized))
+      return jwkToKey(entry, normalized, extractable)
+    }
     default:
       throw new JOSENotSupported('Unsupported "kty" (Key Type) Parameter value')
   }

@@ -7,14 +7,18 @@ import type * as types from '../types.d.ts'
 const tag = (key: object): string | undefined =>
   (key as { [Symbol.toStringTag]?: string })[Symbol.toStringTag]
 
+type Usage = 'sign' | 'verify' | 'encrypt' | 'decrypt'
+
 // RFC 7517, Sections 4.2-4.4: honor declared use, key_ops and alg when consuming a JWK.
-const jwkMatchesOp = (entry: KeyDescriptor, key: types.JWK, usage: Usage) => {
+// Every JWK entry point (direct key inputs, imports, embedded headers, key sets) enforces the
+// same three constraints through this helper so a self-contradictory JWK gets one verdict.
+export function checkJwkConstraints(entry: KeyDescriptor, key: types.JWK, usage: Usage): void {
   const { alg } = entry
   if (key.use !== undefined) {
-    const expected = usage === 'sign' || usage === 'verify' ? 'sig' : 'enc'
-    if (key.use !== expected) {
+    const expectedUse = usage === 'sign' || usage === 'verify' ? 'sig' : 'enc'
+    if (key.use !== expectedUse) {
       throw new TypeError(
-        `Invalid key for this operation, its "use" must be "${expected}" when present`,
+        `Invalid key for this operation, its "use" must be "${expectedUse}" when present`,
       )
     }
   }
@@ -69,7 +73,7 @@ export async function prepareKey(
           : `JSON Web Key for this operation must be a ${requiresPrivateKey ? 'private' : 'public'} JWK`,
       )
     }
-    jwkMatchesOp(entry, normalized, usage)
+    checkJwkConstraints(entry, normalized, usage)
     if (normalized.kty === 'oct') {
       return decode(normalized.k!)
     }
@@ -119,8 +123,6 @@ export async function prepareKey(
   normalized.alg = alg
   return (cached[alg] = await jwkToKey(entry, normalized))
 }
-
-type Usage = 'sign' | 'verify' | 'encrypt' | 'decrypt'
 
 let cache: WeakMap<object, Record<string, CryptoKey>>
 
