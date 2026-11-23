@@ -124,6 +124,8 @@ function lengthAndInput(input: Uint8Array) {
   return concat(uint32be(input.length), input)
 }
 
+class EcdhKeyAgreementFailure extends Error {}
+
 /**
  * Concat KDF implementation
  *
@@ -155,27 +157,38 @@ async function concatKdf(Z: Uint8Array, keyDataLength: number, OtherInfo: Uint8A
 /**
  * ECDH-ES Key Agreement with Concat KDF
  *
+ * @param entry
+ * @param enc
  * @param publicKey
  * @param privateKey
- * @param algorithmId - Data for the length-prefixed AlgorithmID: For Direct Key Agreement
- *   (ECDH-ES), this is the "enc" value. For Key Agreement with Key Wrapping, this is the "alg"
- *   value
- * @param keyDataLength - Keydatalen: Number of bits in the desired output key
  * @param apu - Data for the length-prefixed PartyUInfo: Agreement PartyUInfo value (information
  *   about the producer)
  * @param apv - Data for the length-prefixed PartyVInfo: Agreement PartyVInfo value (information
  *   about the recipient)
  */
 async function ecdhesDeriveKey(
+  entry: JWEConventionalAlgorithm,
+  enc: JWEEncryption,
   publicKey: types.CryptoKey,
   privateKey: types.CryptoKey,
-  algorithmId: string,
-  keyDataLength: number,
   apu: Uint8Array = new Uint8Array(),
   apv: Uint8Array = new Uint8Array(),
 ): Promise<Uint8Array> {
   checkEcdhCryptoKey(publicKey)
   checkEcdhCryptoKey(privateKey, 'deriveBits')
+
+  if (
+    publicKey.algorithm.name !== privateKey.algorithm.name ||
+    (publicKey.algorithm.name !== 'X25519' &&
+      (publicKey.algorithm as EcKeyAlgorithm).namedCurve !==
+        (privateKey.algorithm as EcKeyAlgorithm).namedCurve)
+  ) {
+    throw new EcdhKeyAgreementFailure()
+  }
+
+  const direct = entry.mode === 'direct-key-agreement'
+  const algorithmId = direct ? enc.alg : entry.alg
+  const keyDataLength = direct ? enc.cekBits : parseInt(entry.alg.slice(-5, -2), 10)
 
   // RFC 7518, Section 4.6.2: AlgorithmID || PartyUInfo || PartyVInfo || SuppPubInfo.
   // Each variable-length field has a 32-bit octet count; SuppPrivInfo is empty.
@@ -297,10 +310,10 @@ export async function decryptKeyManagement(
       checkPartyInfo(partyUInfo, partyVInfo)
 
       const derivedKey = await ecdhesDeriveKey(
+        entry,
+        enc,
         ephemeralPublicKey,
         key,
-        direct ? enc.alg : alg,
-        direct ? enc.cekBits : parseInt(alg.slice(-5, -2), 10),
         partyUInfo,
         partyVInfo,
       )
@@ -417,22 +430,20 @@ export async function encryptKeyManagement(
         exportableEpk = await subtle.getPublicKey(ephemeralPrivateKey, [])
       }
       const { x, y, crv, kty } = (await subtle.exportKey('jwk', exportableEpk)) as types.JWK
-      const direct = mode === 'direct-key-agreement'
-      const derivedKey = await ecdhesDeriveKey(
-        key,
-        ephemeralPrivateKey,
-        direct ? enc.alg : alg,
-        direct ? enc.cekBits : parseInt(alg.slice(-5, -2), 10),
-        apu,
-        apv,
-      )
+      let derivedKey: Uint8Array
+      try {
+        derivedKey = await ecdhesDeriveKey(entry, enc, key, ephemeralPrivateKey, apu, apv)
+      } catch (cause) {
+        if (!(cause instanceof EcdhKeyAgreementFailure)) throw cause
+        throw new JWEInvalid(`JOSE Header "epk" (Ephemeral Public Key) missing or invalid`)
+      }
       const epk: JWK = { x, crv, kty }
       if (kty === 'EC') epk.y = y
       parameters = { epk }
       if (providedApu !== undefined) parameters.apu = b64u(providedApu)
       if (providedApv !== undefined) parameters.apv = b64u(providedApv)
 
-      if (direct) return [derivedKey, undefined, parameters]
+      if (mode === 'direct-key-agreement') return [derivedKey, undefined, parameters]
 
       key = derivedKey
       break
